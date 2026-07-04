@@ -1,0 +1,83 @@
+server:
+  port: 8080
+  shutdown: graceful
+
+spring:
+  application:
+    name: dify-to-agentscope
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      probes:
+        enabled: true
+
+logging:
+  pattern:
+    level: "%5p [traceId:%X{traceId:-},workflowId:%X{workflowId:-}]"
+
+dify:
+  agentscope:
+    default-workflow-id: default
+    generated-output-dir: target/generated-workflows
+    workflows:
+      default:
+        source-type: dify
+        dsl-location: classpath:workflows/default.dsl
+      manual-demo:
+        source-type: agentscope
+        location: classpath:workflows/manual-demo.workflow.yml
+    build-agents: false
+    fail-on-missing-integrations: false
+    request-timeout: 10s
+    execution:
+      max-steps: 100
+      default-node-timeout: 30s
+      node-timeouts: {}
+      fallback-answer: "当前系统繁忙，无法联网工作，请稍后重试！"
+      identifier-rules:
+        demo-item: "ITEM-\\d{4}"
+        demo-request: "REQ-\\d{4}"
+        demo-task: "TASK-\\d{4}"
+    memory:
+      session:
+        enabled: true
+        max-turns: 20
+      memos:
+        enabled: false
+        endpoint:
+        access-token:
+        visibility: PRIVATE
+        default-limit: 5
+    nacos:
+      enabled: false
+      server-addr:
+      namespace: public
+      username:
+      password:
+      access-key:
+      secret-key:
+      prompt:
+        enabled: true
+        keys: []
+        version:
+        label:
+      skill:
+        enabled: true
+        names: []
+        version:
+        label:
+      mcp:
+        enabled: true
+        servers: {}
+    boundary:
+      max-query-length: 4000
+      max-output-length: 8000
+      require-user-id: true
+      allow-stub-integrations: true

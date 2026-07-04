@@ -1,0 +1,36 @@
+workflow:
+  name: Manual AgentScope Demo
+  mode: agentscope-workflow
+  opening_statement: "Directly authored workflow without Dify."
+  variables:
+    - name: chat_round
+      type: number
+      default: 0
+      description: Conversation round counter.
+
+graph:
+  nodes:
+    - id: start
+      type: start
+      title: Start
+
+    - id: assistant
+      type: agent
+      title: ManualAssistant
+      timeout-ms: 30000
+      instruction: "Answer the user concisely. Use available tools only when needed."
+      model: dashscope:qwen-plus
+      tools: []
+
+    - id: answer
+      type: answer
+      title: Answer
+      answer: "{{#assistant.text#}}"
+
+  edges:
+    - from: start
+      to: assistant
+      handle: source
+    - from: assistant
+      to: answer
+      handle: source
