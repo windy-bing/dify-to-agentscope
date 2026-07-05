@@ -36,9 +36,15 @@ import io.agentscope.core.state.AgentStateStore;
 import io.agentscope.core.state.InMemoryAgentStateStore;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ExecutorService;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.Resource;
@@ -181,12 +187,39 @@ public class WorkflowRuntimeConfig {
     }
 
     /**
+     * 创建 workflow 节点共享执行池。
+     * <p>所有节点级超时都通过该有界线程池执行。队列满时由执行器快速失败，避免无界排队拖垮实例。</p>
+     *
+     * @param properties 全局运行时配置
+     * @return 节点执行线程池
+     */
+    @Bean(destroyMethod = "shutdown")
+    ExecutorService workflowNodeExecutor(DifyRuntimeProperties properties) {
+        int threads = Math.max(1, properties.getDeployment().getNodeExecutorThreads());
+        int capacity = Math.max(1, properties.getDeployment().getNodeExecutorQueueCapacity());
+        AtomicInteger counter = new AtomicInteger();
+        return new ThreadPoolExecutor(
+                threads,
+                threads,
+                30L,
+                TimeUnit.SECONDS,
+                new ArrayBlockingQueue<>(capacity),
+                runnable -> {
+                    Thread thread = new Thread(runnable, "workflow-node-" + counter.incrementAndGet());
+                    thread.setDaemon(true);
+                    return thread;
+                },
+                new ThreadPoolExecutor.AbortPolicy());
+    }
+
+    /**
      * 创建短期会话记忆存储。
      *
      * @param properties 全局运行时配置
      * @return 启用时返回内存 session store，关闭时返回 NoOp 实现
      */
     @Bean
+    @ConditionalOnMissingBean(SessionMemoryStore.class)
     SessionMemoryStore sessionMemoryStore(DifyRuntimeProperties properties) {
         if (!properties.getMemory().getSession().isEnabled()) {
             return new NoOpSessionMemoryStore();
@@ -202,6 +235,7 @@ public class WorkflowRuntimeConfig {
      * @return AgentScope 官方内存状态存储
      */
     @Bean
+    @ConditionalOnMissingBean(AgentStateStore.class)
     AgentStateStore agentScopeAgentStateStore() {
         return new InMemoryAgentStateStore();
     }
@@ -214,6 +248,7 @@ public class WorkflowRuntimeConfig {
      * @return 启用 Memos 时返回 HTTP 适配器，否则返回 NoOp 实现
      */
     @Bean
+    @ConditionalOnMissingBean(MemoStore.class)
     MemoStore memoStore(DifyRuntimeProperties properties, RuntimeConfig runtimeConfig) {
         DifyRuntimeProperties.Memos memos = properties.getMemory().getMemos();
         if (memos.isEnabled()) {
@@ -252,7 +287,10 @@ public class WorkflowRuntimeConfig {
             OutputSanitizer outputSanitizer,
             ExecutionTracer executionTracer,
             MemoStore memoStore,
-            AgentStateStore agentStateStore) {
+            AgentStateStore agentStateStore,
+            SessionMemoryStore sessionMemoryStore,
+            ExecutorService workflowNodeExecutor) {
+        validateDeployment(properties, sessionMemoryStore, agentStateStore);
         Map<String, WorkflowRuntimeBundle> bundles = new LinkedHashMap<>();
         WorkflowPlanWriter writer = new WorkflowPlanWriter();
         AgentScopeWorkflowPlanMapper agentScopeMapper = new AgentScopeWorkflowPlanMapper();
@@ -261,7 +299,7 @@ public class WorkflowRuntimeConfig {
                 Resource resource = resourceLoader.getResource(definition.getLocation());
                 WorkflowPlan plan = parseWorkflow(definition, resource);
                 var agentScopePlan = agentScopeMapper.toAgentScope(plan);
-                writer.write(plan, Path.of(properties.getGeneratedOutputDir()).resolve(workflowId));
+                writeAuditArtifact(writer, properties, workflowId, plan);
                 AgentInvoker invoker = agentInvoker(plan, toolGateway, properties, permissionPolicy, agentStateStore);
                 WorkflowExecutor executor = new WorkflowExecutor(
                         workflowId,
@@ -272,6 +310,7 @@ public class WorkflowRuntimeConfig {
                         permissionPolicy,
                         outputSanitizer,
                         executionTracer,
+                        workflowNodeExecutor,
                         properties.getExecution().getMaxSteps(),
                         properties.getExecution().getDefaultNodeTimeout(),
                         properties.getExecution().getNodeTimeouts(),
@@ -285,6 +324,59 @@ public class WorkflowRuntimeConfig {
             }
         });
         return new WorkflowRegistry(bundles);
+    }
+
+    /**
+     * 写出启动期 workflow 审计产物。
+     *
+     * @param writer     workflow 计划写出器
+     * @param properties 全局运行时配置
+     * @param workflowId workflow ID
+     * @param plan       workflow 计划
+     * @throws IOException 写文件失败
+     */
+    private void writeAuditArtifact(
+            WorkflowPlanWriter writer,
+            DifyRuntimeProperties properties,
+            String workflowId,
+            WorkflowPlan plan) throws IOException {
+        if (!properties.getDeployment().isWriteGeneratedArtifacts()) {
+            return;
+        }
+        writer.write(plan, Path.of(properties.getGeneratedOutputDir()).resolve(workflowId));
+    }
+
+    /**
+     * 校验部署级状态边界。
+     * <p>当前项目保留了 AgentScope 官方 {@link InMemoryAgentStateStore} 的最小实现和项目级内存 session，
+     * 这适合本地开发和单实例验证；当声明为无状态生产部署且禁止进程内状态时，必须外接持久化状态实现，否则启动失败。</p>
+     *
+     * @param properties 全局运行时配置
+     */
+    private void validateDeployment(
+            DifyRuntimeProperties properties,
+            SessionMemoryStore sessionMemoryStore,
+            AgentStateStore agentStateStore) {
+        DifyRuntimeProperties.Deployment deployment = properties.getDeployment();
+        if (!deployment.isStateless()) {
+            return;
+        }
+        if (deployment.isWriteGeneratedArtifacts()) {
+            throw new IllegalStateException(
+                    "Stateless deployment must set dify.agentscope.deployment.write-generated-artifacts=false");
+        }
+        if (deployment.isAllowInMemoryState()) {
+            return;
+        }
+        if (properties.getMemory().getSession().isEnabled()
+                && sessionMemoryStore instanceof InMemorySessionMemoryStore) {
+            throw new IllegalStateException(
+                    "Stateless deployment must disable session memory or provide an external SessionMemoryStore");
+        }
+        if (properties.isBuildAgents() && agentStateStore instanceof InMemoryAgentStateStore) {
+            throw new IllegalStateException(
+                    "Stateless deployment with AgentScope agents requires an external AgentStateStore implementation");
+        }
     }
 
     private WorkflowPlan parseWorkflow(DifyRuntimeProperties.WorkflowDefinition definition, Resource resource)

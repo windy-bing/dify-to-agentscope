@@ -17,6 +17,7 @@ import io.agentscope.core.state.InMemoryAgentStateStore;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.Map;
+import java.util.concurrent.ForkJoinPool;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -99,6 +100,7 @@ class CodeFirstWorkflowRuntimeTest {
                 new OutputSanitizer(),
                 new LoggingExecutionTracer(),
                 new NoOpMemoStore(),
-                new InMemoryAgentStateStore());
+                new InMemoryAgentStateStore(),
+                ForkJoinPool.commonPool());
     }
 }

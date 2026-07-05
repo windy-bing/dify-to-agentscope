@@ -36,6 +36,12 @@ dify:
     build-agents: false
     fail-on-missing-integrations: false
     request-timeout: 10s
+    deployment:
+      stateless: false
+      write-generated-artifacts: true
+      node-executor-threads: 8
+      node-executor-queue-capacity: 1000
+      allow-in-memory-state: true
     execution:
       max-steps: 100
       default-node-timeout: 30s

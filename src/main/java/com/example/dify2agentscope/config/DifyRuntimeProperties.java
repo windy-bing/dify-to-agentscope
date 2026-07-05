@@ -43,6 +43,7 @@ public class DifyRuntimeProperties {
     private Memory memory = new Memory();
     private Nacos nacos = new Nacos();
     private Boundary boundary = new Boundary();
+    private Deployment deployment = new Deployment();
 
     /**
      * 获取默认工作流 ID。 / Get the default workflow identifier.
@@ -312,6 +313,126 @@ public class DifyRuntimeProperties {
      */
     public void setBoundary(Boundary boundary) {
         this.boundary = boundary;
+    }
+
+    /**
+     * 获取部署级运行参数。
+     *
+     * @return 部署配置对象
+     */
+    public Deployment getDeployment() {
+        return deployment;
+    }
+
+    /**
+     * 设置部署级运行参数。
+     *
+     * @param deployment 部署配置对象
+     */
+    public void setDeployment(Deployment deployment) {
+        this.deployment = deployment;
+    }
+
+    /**
+     * 部署级运行参数。
+     * <p>这些配置不描述单个 workflow 的业务逻辑，而是约束服务在容器、Kubernetes、多实例等生产环境中的资源使用和状态边界。</p>
+     */
+    public static class Deployment {
+        private boolean stateless;
+        private boolean writeGeneratedArtifacts = true;
+        private int nodeExecutorThreads = Math.max(4, Runtime.getRuntime().availableProcessors() * 2);
+        private int nodeExecutorQueueCapacity = 1000;
+        private boolean allowInMemoryState = true;
+
+        /**
+         * 判断是否按无状态服务部署。
+         *
+         * @return true 表示要求当前实例不依赖本地磁盘或本地进程状态
+         */
+        public boolean isStateless() {
+            return stateless;
+        }
+
+        /**
+         * 设置是否按无状态服务部署。
+         *
+         * @param stateless true 表示开启无状态部署校验
+         */
+        public void setStateless(boolean stateless) {
+            this.stateless = stateless;
+        }
+
+        /**
+         * 判断是否写出转换后的 workflow 审计产物。
+         *
+         * @return true 表示启动或动态创建 workflow 时写入 generated-output-dir
+         */
+        public boolean isWriteGeneratedArtifacts() {
+            return writeGeneratedArtifacts;
+        }
+
+        /**
+         * 设置是否写出转换后的 workflow 审计产物。
+         *
+         * @param writeGeneratedArtifacts true 表示允许写本地审计产物
+         */
+        public void setWriteGeneratedArtifacts(boolean writeGeneratedArtifacts) {
+            this.writeGeneratedArtifacts = writeGeneratedArtifacts;
+        }
+
+        /**
+         * 获取节点执行线程数。
+         *
+         * @return 共享节点线程池固定线程数
+         */
+        public int getNodeExecutorThreads() {
+            return nodeExecutorThreads;
+        }
+
+        /**
+         * 设置节点执行线程数。
+         *
+         * @param nodeExecutorThreads 共享节点线程池固定线程数
+         */
+        public void setNodeExecutorThreads(int nodeExecutorThreads) {
+            this.nodeExecutorThreads = nodeExecutorThreads;
+        }
+
+        /**
+         * 获取节点执行队列容量。
+         *
+         * @return 队列容量，超过后请求会快速失败
+         */
+        public int getNodeExecutorQueueCapacity() {
+            return nodeExecutorQueueCapacity;
+        }
+
+        /**
+         * 设置节点执行队列容量。
+         *
+         * @param nodeExecutorQueueCapacity 队列容量
+         */
+        public void setNodeExecutorQueueCapacity(int nodeExecutorQueueCapacity) {
+            this.nodeExecutorQueueCapacity = nodeExecutorQueueCapacity;
+        }
+
+        /**
+         * 判断是否允许使用进程内状态实现。
+         *
+         * @return true 表示允许内存 session、内存 AgentStateStore 等本地状态
+         */
+        public boolean isAllowInMemoryState() {
+            return allowInMemoryState;
+        }
+
+        /**
+         * 设置是否允许使用进程内状态实现。
+         *
+         * @param allowInMemoryState true 表示允许本地内存状态，false 表示生产启动时做强校验
+         */
+        public void setAllowInMemoryState(boolean allowInMemoryState) {
+            this.allowInMemoryState = allowInMemoryState;
+        }
     }
 
     /**

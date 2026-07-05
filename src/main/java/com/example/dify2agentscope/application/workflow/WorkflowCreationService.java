@@ -20,6 +20,7 @@ import io.agentscope.core.state.AgentStateStore;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
 import org.springframework.stereotype.Service;
 
 /**
@@ -38,6 +39,7 @@ public class WorkflowCreationService {
     private final ExecutionTracer executionTracer;
     private final MemoStore memoStore;
     private final AgentStateStore agentStateStore;
+    private final ExecutorService nodeExecutor;
     private final WorkflowPlanWriter writer = new WorkflowPlanWriter();
     private final AgentScopeWorkflowPlanMapper agentScopeMapper = new AgentScopeWorkflowPlanMapper();
 
@@ -55,6 +57,7 @@ public class WorkflowCreationService {
         this.executionTracer = null;
         this.memoStore = null;
         this.agentStateStore = null;
+        this.nodeExecutor = null;
     }
 
     /**
@@ -69,6 +72,7 @@ public class WorkflowCreationService {
      * @param executionTracer   执行追踪器
      * @param memoStore         长期记忆存储
      * @param agentStateStore   AgentScope 官方状态存储
+     * @param nodeExecutor      workflow 节点共享执行池
      */
     public WorkflowCreationService(
             WorkflowRegistry workflowRegistry,
@@ -79,7 +83,8 @@ public class WorkflowCreationService {
             OutputSanitizer outputSanitizer,
             ExecutionTracer executionTracer,
             MemoStore memoStore,
-            AgentStateStore agentStateStore) {
+            AgentStateStore agentStateStore,
+            ExecutorService nodeExecutor) {
         this.workflowRegistry = workflowRegistry;
         this.properties = properties;
         this.toolGateway = toolGateway;
@@ -89,6 +94,7 @@ public class WorkflowCreationService {
         this.executionTracer = executionTracer;
         this.memoStore = memoStore;
         this.agentStateStore = agentStateStore;
+        this.nodeExecutor = nodeExecutor;
     }
 
     /**
@@ -111,11 +117,7 @@ public class WorkflowCreationService {
             builder.answer("{{#" + request.getAgentId() + ".text#}}");
         }
         WorkflowPlan plan = builder.build();
-        try {
-            writer.write(plan, Path.of(properties.getGeneratedOutputDir()).resolve(request.getWorkflowId()));
-        } catch (IOException e) {
-            throw new IllegalStateException("Failed to write generated workflow", e);
-        }
+        writeAuditArtifact(request.getWorkflowId(), plan);
         WorkflowExecutor executor = new WorkflowExecutor(
                 request.getWorkflowId(),
                 plan,
@@ -125,6 +127,7 @@ public class WorkflowCreationService {
                 permissionPolicy,
                 outputSanitizer,
                 executionTracer,
+                nodeExecutor,
                 properties.getExecution().getMaxSteps(),
                 properties.getExecution().getDefaultNodeTimeout(),
                 properties.getExecution().getNodeTimeouts(),
@@ -139,6 +142,23 @@ public class WorkflowCreationService {
                 executor);
         workflowRegistry.register(request.getWorkflowId(), bundle);
         return bundle;
+    }
+
+    /**
+     * 写出动态创建 workflow 的审计产物。
+     *
+     * @param workflowId workflow ID
+     * @param plan       工作流计划
+     */
+    private void writeAuditArtifact(String workflowId, WorkflowPlan plan) {
+        if (!properties.getDeployment().isWriteGeneratedArtifacts()) {
+            return;
+        }
+        try {
+            writer.write(plan, Path.of(properties.getGeneratedOutputDir()).resolve(workflowId));
+        } catch (IOException e) {
+            throw new IllegalStateException("Failed to write generated workflow", e);
+        }
     }
 
     /**

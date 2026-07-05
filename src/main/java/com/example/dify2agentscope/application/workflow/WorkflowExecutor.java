@@ -29,8 +29,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
@@ -61,6 +62,7 @@ public class WorkflowExecutor {
     private final PermissionPolicy permissionPolicy;
     private final OutputSanitizer outputSanitizer;
     private final ExecutionTracer tracer;
+    private final ExecutorService nodeExecutor;
     private final int maxSteps;
     private final Duration defaultNodeTimeout;
     private final Map<String, Duration> nodeTimeouts;
@@ -203,6 +205,80 @@ public class WorkflowExecutor {
                 demoTaskPattern);
     }
 
+    /**
+     * 带共享节点执行池的构造器。
+     * <p>生产运行应优先使用该构造器，由 Spring 注入有界线程池，避免每个节点临时创建线程导致线上抖动。</p>
+     *
+     * @param workflowId         工作流标识
+     * @param plan               工作流计划
+     * @param agentInvoker       Agent 调用器
+     * @param knowledgeRetriever 知识检索器
+     * @param permissionPolicy   权限策略
+     * @param outputSanitizer    输出净化器
+     * @param tracer             执行追踪器
+     * @param nodeExecutor       节点执行共享线程池
+     * @param maxSteps           最大执行步骤
+     * @param defaultNodeTimeout 默认节点超时
+     * @param nodeTimeouts       节点超时覆盖
+     * @param fallbackAnswer     兜底回复
+     * @param demoItemPattern    demo item 正则
+     * @param demoRequestPattern demo request 正则
+     * @param demoTaskPattern    demo task 正则
+     */
+    public WorkflowExecutor(
+            String workflowId,
+            WorkflowPlan plan,
+            AgentInvoker agentInvoker,
+            KnowledgeRetriever knowledgeRetriever,
+            PermissionPolicy permissionPolicy,
+            OutputSanitizer outputSanitizer,
+            ExecutionTracer tracer,
+            ExecutorService nodeExecutor,
+            int maxSteps,
+            Duration defaultNodeTimeout,
+            Map<String, Duration> nodeTimeouts,
+            String fallbackAnswer,
+            String demoItemPattern,
+            String demoRequestPattern,
+            String demoTaskPattern) {
+        this(workflowId,
+                plan,
+                agentInvoker,
+                knowledgeRetriever,
+                new com.example.dify2agentscope.infrastructure.memory.NoOpMemoStore(),
+                permissionPolicy,
+                outputSanitizer,
+                tracer,
+                nodeExecutor,
+                maxSteps,
+                defaultNodeTimeout,
+                nodeTimeouts,
+                fallbackAnswer,
+                demoItemPattern,
+                demoRequestPattern,
+                demoTaskPattern);
+    }
+
+    /**
+     * 兼容构造器。
+     * <p>历史调用方未传入节点执行池时使用 JVM 公共池；生产路径由 Spring 配置注入有界线程池。</p>
+     *
+     * @param workflowId         工作流标识
+     * @param plan               工作流计划
+     * @param agentInvoker       Agent 调用器
+     * @param knowledgeRetriever 知识检索器
+     * @param memoStore          长期记忆存储
+     * @param permissionPolicy   权限策略
+     * @param outputSanitizer    输出净化器
+     * @param tracer             执行追踪器
+     * @param maxSteps           最大执行步骤
+     * @param defaultNodeTimeout 默认节点超时
+     * @param nodeTimeouts       节点超时覆盖
+     * @param fallbackAnswer     兜底回复
+     * @param demoItemPattern    demo item 正则
+     * @param demoRequestPattern demo request 正则
+     * @param demoTaskPattern    demo task 正则
+     */
     public WorkflowExecutor(
             String workflowId,
             WorkflowPlan plan,
@@ -219,6 +295,61 @@ public class WorkflowExecutor {
             String demoItemPattern,
             String demoRequestPattern,
             String demoTaskPattern) {
+        this(workflowId,
+                plan,
+                agentInvoker,
+                knowledgeRetriever,
+                memoStore,
+                permissionPolicy,
+                outputSanitizer,
+                tracer,
+                ForkJoinPool.commonPool(),
+                maxSteps,
+                defaultNodeTimeout,
+                nodeTimeouts,
+                fallbackAnswer,
+                demoItemPattern,
+                demoRequestPattern,
+                demoTaskPattern);
+    }
+
+    /**
+     * 全参构造器，允许注入共享节点执行池。
+     *
+     * @param workflowId         工作流标识
+     * @param plan               工作流计划
+     * @param agentInvoker       Agent 调用器
+     * @param knowledgeRetriever 知识检索器
+     * @param memoStore          长期记忆存储
+     * @param permissionPolicy   权限策略
+     * @param outputSanitizer    输出净化器
+     * @param tracer             执行追踪器
+     * @param nodeExecutor       节点执行共享线程池
+     * @param maxSteps           最大执行步骤
+     * @param defaultNodeTimeout 默认节点超时
+     * @param nodeTimeouts       节点超时覆盖
+     * @param fallbackAnswer     兜底回复
+     * @param demoItemPattern    demo item 正则
+     * @param demoRequestPattern demo request 正则
+     * @param demoTaskPattern    demo task 正则
+     */
+    public WorkflowExecutor(
+            String workflowId,
+            WorkflowPlan plan,
+            AgentInvoker agentInvoker,
+            KnowledgeRetriever knowledgeRetriever,
+            MemoStore memoStore,
+            PermissionPolicy permissionPolicy,
+            OutputSanitizer outputSanitizer,
+            ExecutionTracer tracer,
+            ExecutorService nodeExecutor,
+            int maxSteps,
+            Duration defaultNodeTimeout,
+            Map<String, Duration> nodeTimeouts,
+            String fallbackAnswer,
+            String demoItemPattern,
+            String demoRequestPattern,
+            String demoTaskPattern) {
         this.workflowId = workflowId;
         this.plan = plan;
         this.runtime = new WorkflowRuntime(plan);
@@ -228,6 +359,7 @@ public class WorkflowExecutor {
         this.permissionPolicy = permissionPolicy;
         this.outputSanitizer = outputSanitizer;
         this.tracer = tracer;
+        this.nodeExecutor = nodeExecutor == null ? ForkJoinPool.commonPool() : nodeExecutor;
         this.maxSteps = maxSteps;
         this.defaultNodeTimeout = defaultNodeTimeout == null ? Duration.ZERO : defaultNodeTimeout;
         this.nodeTimeouts = nodeTimeouts == null ? Map.of() : Map.copyOf(nodeTimeouts);
@@ -523,12 +655,12 @@ public class WorkflowExecutor {
         if (timeout.isZero() || timeout.isNegative()) {
             return executeNode(node, context);
         }
-        ExecutorService executor = Executors.newSingleThreadExecutor(runnable -> {
-            Thread thread = new Thread(runnable, "workflow-node-" + workflowId + "-" + node.id());
-            thread.setDaemon(true);
-            return thread;
-        });
-        Future<String> future = executor.submit(() -> executeNode(node, context));
+        Future<String> future;
+        try {
+            future = nodeExecutor.submit(() -> executeNode(node, context));
+        } catch (RejectedExecutionException e) {
+            throw new IllegalStateException("Workflow node executor is saturated: " + workflowId, e);
+        }
         try {
             return future.get(timeout.toMillis(), TimeUnit.MILLISECONDS);
         } catch (TimeoutException e) {
@@ -546,8 +678,6 @@ public class WorkflowExecutor {
                 throw error;
             }
             throw new IllegalStateException("Node execution failed: " + node.id(), cause);
-        } finally {
-            executor.shutdownNow();
         }
     }
 

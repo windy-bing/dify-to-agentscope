@@ -1,8 +1,10 @@
 package com.example.dify2agentscope.application.workflow;
 
-import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
 
 /**
  * 按 workflowId 管理已加载的工作流运行时。
@@ -10,7 +12,7 @@ import java.util.Set;
  */
 public class WorkflowRegistry {
 
-    private final Map<String, WorkflowRuntimeBundle> workflows;
+    private final ConcurrentMap<String, WorkflowRuntimeBundle> workflows;
 
     /**
      * 构造工作流注册表。
@@ -19,7 +21,7 @@ public class WorkflowRegistry {
      * @param workflows 工作流运行时集合 / map of workflow runtime bundles
      */
     public WorkflowRegistry(Map<String, WorkflowRuntimeBundle> workflows) {
-        this.workflows = new LinkedHashMap<>(workflows);
+        this.workflows = new ConcurrentHashMap<>(workflows);
     }
 
     /**
@@ -45,7 +47,7 @@ public class WorkflowRegistry {
      * @return 工作流 ID 集合 / set of workflow IDs
      */
     public Set<String> workflowIds() {
-        return workflows.keySet();
+        return Set.copyOf(workflows.keySet());
     }
 
     /**
@@ -55,6 +57,9 @@ public class WorkflowRegistry {
      * @param bundle     workflow 运行时包
      */
     public void register(String workflowId, WorkflowRuntimeBundle bundle) {
-        workflows.put(workflowId, bundle);
+        if (workflowId == null || workflowId.isBlank()) {
+            throw new IllegalArgumentException("workflowId must not be blank");
+        }
+        workflows.put(workflowId, Objects.requireNonNull(bundle, "bundle must not be null"));
     }
 }

@@ -19,6 +19,7 @@ import io.agentscope.core.state.AgentStateStore;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.concurrent.ExecutorService;
 import org.springframework.stereotype.Service;
 
 /**
@@ -39,6 +40,7 @@ public class CodeFirstWorkflowRuntime {
     private final ExecutionTracer executionTracer;
     private final MemoStore memoStore;
     private final AgentStateStore agentStateStore;
+    private final ExecutorService nodeExecutor;
     private final WorkflowPlanWriter writer = new WorkflowPlanWriter();
     private final AgentScopeWorkflowPlanMapper agentScopeMapper = new AgentScopeWorkflowPlanMapper();
 
@@ -54,6 +56,7 @@ public class CodeFirstWorkflowRuntime {
      * @param executionTracer    执行追踪器
      * @param memoStore          长期记忆存储
      * @param agentStateStore    AgentScope 官方状态存储
+     * @param nodeExecutor       workflow 节点共享执行池
      */
     public CodeFirstWorkflowRuntime(
             WorkflowRegistry workflowRegistry,
@@ -64,7 +67,8 @@ public class CodeFirstWorkflowRuntime {
             OutputSanitizer outputSanitizer,
             ExecutionTracer executionTracer,
             MemoStore memoStore,
-            AgentStateStore agentStateStore) {
+            AgentStateStore agentStateStore,
+            ExecutorService nodeExecutor) {
         this.workflowRegistry = workflowRegistry;
         this.properties = properties;
         this.toolGateway = toolGateway;
@@ -74,6 +78,7 @@ public class CodeFirstWorkflowRuntime {
         this.executionTracer = executionTracer;
         this.memoStore = memoStore;
         this.agentStateStore = agentStateStore;
+        this.nodeExecutor = nodeExecutor;
     }
 
     /**
@@ -121,6 +126,7 @@ public class CodeFirstWorkflowRuntime {
                 permissionPolicy,
                 outputSanitizer,
                 executionTracer,
+                nodeExecutor,
                 properties.getExecution().getMaxSteps(),
                 properties.getExecution().getDefaultNodeTimeout(),
                 properties.getExecution().getNodeTimeouts(),
@@ -153,6 +159,9 @@ public class CodeFirstWorkflowRuntime {
      * @param plan       工作流计划
      */
     private void writeAuditArtifact(String workflowId, WorkflowPlan plan) {
+        if (!properties.getDeployment().isWriteGeneratedArtifacts()) {
+            return;
+        }
         try {
             writer.write(plan, Path.of(properties.getGeneratedOutputDir()).resolve(workflowId));
         } catch (IOException e) {
