@@ -99,9 +99,72 @@ dify:
 ```yaml
 dify:
   agentscope:
+    deployment:
+      stateless: true
+      write-generated-artifacts: false
+      allow-in-memory-state: false
     fail-on-missing-integrations: true
     boundary:
       allow-stub-integrations: false
+    persistence:
+      type: redis
+      key-prefix: dify-to-agentscope-prod
+      session-ttl: 7d
+      a2a-task-ttl: 1d
+      agent-state-ttl: 7d
+    workflow-store:
+      type: nacos
+      nacos-index-data-id: dify-agentscope-workflows.json
+      nacos-data-id-prefix: dify-agentscope-workflow-
+      nacos-group: DEFAULT_GROUP
+
+spring:
+  data:
+    redis:
+      host: redis.example.com
+      port: 6379
+      password: optional
+```
+
+`persistence.type=redis` 会把短期 session memory、A2A task 和 AgentScope `AgentStateStore`
+切到 Redis。动态创建的 workflow 不适合放 Redis；生产建议用 `workflow-store.type=nacos` 存配置定义，
+服务启动时会把 Nacos 中已保存的动态 workflow 加载进运行时。
+
+如果后续改 DB，建议保留当前 `WorkflowDefinitionStore` / `SessionMemoryStore` / `A2aTaskStore`
+接口，只替换实现，并提前建表或接 Flyway/Liquibase。最小表结构建议：
+
+```sql
+create table workflow_definition (
+  workflow_id varchar(128) primary key,
+  plan_json text not null,
+  created_at timestamp not null,
+  updated_at timestamp not null
+);
+
+create table session_memory (
+  session_key varchar(512) primary key,
+  conversation_json text not null,
+  expires_at timestamp,
+  updated_at timestamp not null
+);
+
+create table a2a_task (
+  task_id varchar(128) primary key,
+  task_json text not null,
+  expires_at timestamp,
+  updated_at timestamp not null
+);
+
+create table agent_state (
+  user_id varchar(128) not null,
+  session_id varchar(128) not null,
+  state_key varchar(256) not null,
+  state_kind varchar(32) not null,
+  state_json text not null,
+  expires_at timestamp,
+  updated_at timestamp not null,
+  primary key (user_id, session_id, state_key, state_kind)
+);
 ```
 
 ## Nacos

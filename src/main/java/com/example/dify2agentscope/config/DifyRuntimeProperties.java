@@ -44,6 +44,8 @@ public class DifyRuntimeProperties {
     private Nacos nacos = new Nacos();
     private Boundary boundary = new Boundary();
     private Deployment deployment = new Deployment();
+    private Persistence persistence = new Persistence();
+    private WorkflowStore workflowStore = new WorkflowStore();
 
     /**
      * 获取默认工作流 ID。 / Get the default workflow identifier.
@@ -331,6 +333,135 @@ public class DifyRuntimeProperties {
      */
     public void setDeployment(Deployment deployment) {
         this.deployment = deployment;
+    }
+
+    /**
+     * 获取外部持久化配置。
+     *
+     * @return 持久化配置
+     */
+    public Persistence getPersistence() {
+        return persistence;
+    }
+
+    /**
+     * 设置外部持久化配置。
+     *
+     * @param persistence 持久化配置
+     */
+    public void setPersistence(Persistence persistence) {
+        this.persistence = persistence;
+    }
+
+    /**
+     * 获取动态 workflow 存储配置。
+     *
+     * @return workflow 存储配置
+     */
+    public WorkflowStore getWorkflowStore() {
+        return workflowStore;
+    }
+
+    /**
+     * 设置动态 workflow 存储配置。
+     *
+     * @param workflowStore workflow 存储配置
+     */
+    public void setWorkflowStore(WorkflowStore workflowStore) {
+        this.workflowStore = workflowStore;
+    }
+
+    /**
+     * 外部状态持久化配置。
+     */
+    public static class Persistence {
+        private String type = "memory";
+        private String keyPrefix = "dify-to-agentscope";
+        private Duration sessionTtl = Duration.ofDays(7);
+        private Duration a2aTaskTtl = Duration.ofDays(1);
+        private Duration agentStateTtl = Duration.ofDays(7);
+
+        public String getType() {
+            return type;
+        }
+
+        public void setType(String type) {
+            this.type = type;
+        }
+
+        public String getKeyPrefix() {
+            return keyPrefix;
+        }
+
+        public void setKeyPrefix(String keyPrefix) {
+            this.keyPrefix = keyPrefix;
+        }
+
+        public Duration getSessionTtl() {
+            return sessionTtl;
+        }
+
+        public void setSessionTtl(Duration sessionTtl) {
+            this.sessionTtl = sessionTtl;
+        }
+
+        public Duration getA2aTaskTtl() {
+            return a2aTaskTtl;
+        }
+
+        public void setA2aTaskTtl(Duration a2aTaskTtl) {
+            this.a2aTaskTtl = a2aTaskTtl;
+        }
+
+        public Duration getAgentStateTtl() {
+            return agentStateTtl;
+        }
+
+        public void setAgentStateTtl(Duration agentStateTtl) {
+            this.agentStateTtl = agentStateTtl;
+        }
+    }
+
+    /**
+     * 动态 workflow 定义存储配置。
+     */
+    public static class WorkflowStore {
+        private String type = "memory";
+        private String nacosDataIdPrefix = "dify-agentscope-workflow-";
+        private String nacosIndexDataId = "dify-agentscope-workflows.json";
+        private String nacosGroup = "DEFAULT_GROUP";
+
+        public String getType() {
+            return type;
+        }
+
+        public void setType(String type) {
+            this.type = type;
+        }
+
+        public String getNacosDataIdPrefix() {
+            return nacosDataIdPrefix;
+        }
+
+        public void setNacosDataIdPrefix(String nacosDataIdPrefix) {
+            this.nacosDataIdPrefix = nacosDataIdPrefix;
+        }
+
+        public String getNacosIndexDataId() {
+            return nacosIndexDataId;
+        }
+
+        public void setNacosIndexDataId(String nacosIndexDataId) {
+            this.nacosIndexDataId = nacosIndexDataId;
+        }
+
+        public String getNacosGroup() {
+            return nacosGroup;
+        }
+
+        public void setNacosGroup(String nacosGroup) {
+            this.nacosGroup = nacosGroup;
+        }
     }
 
     /**

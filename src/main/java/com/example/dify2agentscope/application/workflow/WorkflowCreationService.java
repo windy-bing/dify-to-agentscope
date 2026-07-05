@@ -10,6 +10,7 @@ import com.example.dify2agentscope.domain.memory.MemoStore;
 import com.example.dify2agentscope.domain.security.OutputSanitizer;
 import com.example.dify2agentscope.domain.security.PermissionPolicy;
 import com.example.dify2agentscope.domain.trace.ExecutionTracer;
+import com.example.dify2agentscope.domain.workflow.WorkflowDefinitionStore;
 import com.example.dify2agentscope.infrastructure.agentscope.AgentScopeAgentFactory;
 import com.example.dify2agentscope.infrastructure.agentscope.AgentScopeStreamingAgentInvoker;
 import com.example.dify2agentscope.infrastructure.agentscope.StubAgentInvoker;
@@ -40,6 +41,7 @@ public class WorkflowCreationService {
     private final MemoStore memoStore;
     private final AgentStateStore agentStateStore;
     private final ExecutorService nodeExecutor;
+    private final WorkflowDefinitionStore workflowDefinitionStore;
     private final WorkflowPlanWriter writer = new WorkflowPlanWriter();
     private final AgentScopeWorkflowPlanMapper agentScopeMapper = new AgentScopeWorkflowPlanMapper();
 
@@ -58,6 +60,7 @@ public class WorkflowCreationService {
         this.memoStore = null;
         this.agentStateStore = null;
         this.nodeExecutor = null;
+        this.workflowDefinitionStore = null;
     }
 
     /**
@@ -84,7 +87,8 @@ public class WorkflowCreationService {
             ExecutionTracer executionTracer,
             MemoStore memoStore,
             AgentStateStore agentStateStore,
-            ExecutorService nodeExecutor) {
+            ExecutorService nodeExecutor,
+            WorkflowDefinitionStore workflowDefinitionStore) {
         this.workflowRegistry = workflowRegistry;
         this.properties = properties;
         this.toolGateway = toolGateway;
@@ -95,6 +99,7 @@ public class WorkflowCreationService {
         this.memoStore = memoStore;
         this.agentStateStore = agentStateStore;
         this.nodeExecutor = nodeExecutor;
+        this.workflowDefinitionStore = workflowDefinitionStore;
     }
 
     /**
@@ -117,6 +122,7 @@ public class WorkflowCreationService {
             builder.answer("{{#" + request.getAgentId() + ".text#}}");
         }
         WorkflowPlan plan = builder.build();
+        workflowDefinitionStore.save(request.getWorkflowId(), plan);
         writeAuditArtifact(request.getWorkflowId(), plan);
         WorkflowExecutor executor = new WorkflowExecutor(
                 request.getWorkflowId(),

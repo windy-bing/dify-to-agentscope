@@ -3,6 +3,7 @@ package com.example.dify2agentscope.config;
 import com.example.dify2agentscope.application.workflow.WorkflowExecutor;
 import com.example.dify2agentscope.application.workflow.WorkflowRegistry;
 import com.example.dify2agentscope.application.workflow.WorkflowRuntimeBundle;
+import com.example.dify2agentscope.domain.a2a.A2aTaskStore;
 import com.example.dify2agentscope.domain.dify.WorkflowPlan;
 import com.example.dify2agentscope.domain.integration.AgentInvoker;
 import com.example.dify2agentscope.domain.integration.KnowledgeRetriever;
@@ -14,13 +15,18 @@ import com.example.dify2agentscope.domain.security.OutputSanitizer;
 import com.example.dify2agentscope.domain.security.PermissionPolicy;
 import com.example.dify2agentscope.domain.trace.ExecutionTracer;
 import com.example.dify2agentscope.domain.workflow.RuntimeConfig;
+import com.example.dify2agentscope.domain.workflow.WorkflowDefinitionStore;
+import com.example.dify2agentscope.infrastructure.a2a.RedisA2aTaskStore;
 import com.example.dify2agentscope.infrastructure.agentscope.AgentScopeAgentFactory;
+import com.example.dify2agentscope.infrastructure.agentscope.RedisAgentStateStore;
 import com.example.dify2agentscope.infrastructure.agentscope.AgentScopeStreamingAgentInvoker;
 import com.example.dify2agentscope.infrastructure.agentscope.StubAgentInvoker;
 import com.example.dify2agentscope.infrastructure.agentscope.AgentScopeWorkflowPlanMapper;
 import com.example.dify2agentscope.infrastructure.dify.DifyDslParser;
 import com.example.dify2agentscope.infrastructure.dify.WorkflowPlanWriter;
 import com.example.dify2agentscope.infrastructure.workflow.AgentScopeWorkflowParser;
+import com.example.dify2agentscope.infrastructure.workflow.InMemoryWorkflowDefinitionStore;
+import com.example.dify2agentscope.infrastructure.workflow.NacosWorkflowDefinitionStore;
 import com.example.dify2agentscope.infrastructure.knowledge.HttpKnowledgeRetriever;
 import com.example.dify2agentscope.infrastructure.knowledge.StubKnowledgeRetriever;
 import com.example.dify2agentscope.infrastructure.mcp.HigressMcpToolGateway;
@@ -29,6 +35,7 @@ import com.example.dify2agentscope.infrastructure.memory.InMemorySessionMemorySt
 import com.example.dify2agentscope.infrastructure.memory.MemosMemoStore;
 import com.example.dify2agentscope.infrastructure.memory.NoOpMemoStore;
 import com.example.dify2agentscope.infrastructure.memory.NoOpSessionMemoryStore;
+import com.example.dify2agentscope.infrastructure.memory.RedisSessionMemoryStore;
 import com.example.dify2agentscope.infrastructure.nacos.NacosResourceSynchronizer;
 import com.example.dify2agentscope.infrastructure.trace.LoggingExecutionTracer;
 import io.agentscope.core.ReActAgent;
@@ -49,6 +56,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 /**
  * Dify → AgentScope 工作流运行时配置类。
@@ -220,9 +228,16 @@ public class WorkflowRuntimeConfig {
      */
     @Bean
     @ConditionalOnMissingBean(SessionMemoryStore.class)
-    SessionMemoryStore sessionMemoryStore(DifyRuntimeProperties properties) {
+    SessionMemoryStore sessionMemoryStore(DifyRuntimeProperties properties, Optional<StringRedisTemplate> redis) {
         if (!properties.getMemory().getSession().isEnabled()) {
             return new NoOpSessionMemoryStore();
+        }
+        if (redisEnabled(properties)) {
+            return new RedisSessionMemoryStore(
+                    redis.orElseThrow(() -> new IllegalStateException("StringRedisTemplate is required")),
+                    properties.getPersistence().getKeyPrefix(),
+                    properties.getPersistence().getSessionTtl(),
+                    properties.getMemory().getSession().getMaxTurns());
         }
         return new InMemorySessionMemoryStore(properties.getMemory().getSession().getMaxTurns());
     }
@@ -236,8 +251,37 @@ public class WorkflowRuntimeConfig {
      */
     @Bean
     @ConditionalOnMissingBean(AgentStateStore.class)
-    AgentStateStore agentScopeAgentStateStore() {
+    AgentStateStore agentScopeAgentStateStore(DifyRuntimeProperties properties, Optional<StringRedisTemplate> redis) {
+        if (redisEnabled(properties)) {
+            return new RedisAgentStateStore(
+                    redis.orElseThrow(() -> new IllegalStateException("StringRedisTemplate is required")),
+                    properties.getPersistence().getKeyPrefix(),
+                    properties.getPersistence().getAgentStateTtl());
+        }
         return new InMemoryAgentStateStore();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(A2aTaskStore.class)
+    A2aTaskStore a2aTaskStore(DifyRuntimeProperties properties, Optional<StringRedisTemplate> redis) {
+        if (redisEnabled(properties)) {
+            return new RedisA2aTaskStore(
+                    redis.orElseThrow(() -> new IllegalStateException("StringRedisTemplate is required")),
+                    properties.getPersistence().getKeyPrefix(),
+                    properties.getPersistence().getA2aTaskTtl());
+        }
+        return new com.example.dify2agentscope.infrastructure.a2a.InMemoryA2aTaskStore();
+    }
+
+    @Bean
+    @ConditionalOnMissingBean(WorkflowDefinitionStore.class)
+    WorkflowDefinitionStore workflowDefinitionStore(DifyRuntimeProperties properties) {
+        String type = Optional.ofNullable(properties.getWorkflowStore().getType()).orElse("memory");
+        return switch (type.toLowerCase()) {
+            case "memory", "none" -> new InMemoryWorkflowDefinitionStore();
+            case "nacos" -> new NacosWorkflowDefinitionStore(properties);
+            default -> throw new IllegalArgumentException("Unsupported workflow-store.type: " + type);
+        };
     }
 
     /**
@@ -289,8 +333,10 @@ public class WorkflowRuntimeConfig {
             MemoStore memoStore,
             AgentStateStore agentStateStore,
             SessionMemoryStore sessionMemoryStore,
+            A2aTaskStore a2aTaskStore,
+            WorkflowDefinitionStore workflowDefinitionStore,
             ExecutorService workflowNodeExecutor) {
-        validateDeployment(properties, sessionMemoryStore, agentStateStore);
+        validateDeployment(properties, sessionMemoryStore, agentStateStore, a2aTaskStore, workflowDefinitionStore);
         Map<String, WorkflowRuntimeBundle> bundles = new LinkedHashMap<>();
         WorkflowPlanWriter writer = new WorkflowPlanWriter();
         AgentScopeWorkflowPlanMapper agentScopeMapper = new AgentScopeWorkflowPlanMapper();
@@ -301,7 +347,7 @@ public class WorkflowRuntimeConfig {
                 var agentScopePlan = agentScopeMapper.toAgentScope(plan);
                 writeAuditArtifact(writer, properties, workflowId, plan);
                 AgentInvoker invoker = agentInvoker(plan, toolGateway, properties, permissionPolicy, agentStateStore);
-                WorkflowExecutor executor = new WorkflowExecutor(
+                WorkflowExecutor executor = workflowExecutor(
                         workflowId,
                         plan,
                         invoker,
@@ -311,17 +357,27 @@ public class WorkflowRuntimeConfig {
                         outputSanitizer,
                         executionTracer,
                         workflowNodeExecutor,
-                        properties.getExecution().getMaxSteps(),
-                        properties.getExecution().getDefaultNodeTimeout(),
-                        properties.getExecution().getNodeTimeouts(),
-                        properties.getExecution().getFallbackAnswer(),
-                        properties.getExecution().getIdentifierRules().getDemoItem(),
-                        properties.getExecution().getIdentifierRules().getDemoRequest(),
-                        properties.getExecution().getIdentifierRules().getDemoTask());
+                        properties);
                 bundles.put(workflowId, new WorkflowRuntimeBundle(workflowId, plan, agentScopePlan, executor));
             } catch (IOException e) {
                 throw new IllegalStateException("Failed to load workflow " + workflowId, e);
             }
+        });
+        workflowDefinitionStore.loadAll().forEach((workflowId, plan) -> {
+            var agentScopePlan = agentScopeMapper.toAgentScope(plan);
+            AgentInvoker invoker = agentInvoker(plan, toolGateway, properties, permissionPolicy, agentStateStore);
+            WorkflowExecutor executor = workflowExecutor(
+                    workflowId,
+                    plan,
+                    invoker,
+                    knowledgeRetriever,
+                    memoStore,
+                    permissionPolicy,
+                    outputSanitizer,
+                    executionTracer,
+                    workflowNodeExecutor,
+                    properties);
+            bundles.put(workflowId, new WorkflowRuntimeBundle(workflowId, plan, agentScopePlan, executor));
         });
         return new WorkflowRegistry(bundles);
     }
@@ -356,7 +412,9 @@ public class WorkflowRuntimeConfig {
     private void validateDeployment(
             DifyRuntimeProperties properties,
             SessionMemoryStore sessionMemoryStore,
-            AgentStateStore agentStateStore) {
+            AgentStateStore agentStateStore,
+            A2aTaskStore a2aTaskStore,
+            WorkflowDefinitionStore workflowDefinitionStore) {
         DifyRuntimeProperties.Deployment deployment = properties.getDeployment();
         if (!deployment.isStateless()) {
             return;
@@ -373,9 +431,17 @@ public class WorkflowRuntimeConfig {
             throw new IllegalStateException(
                     "Stateless deployment must disable session memory or provide an external SessionMemoryStore");
         }
+        if (a2aTaskStore instanceof com.example.dify2agentscope.infrastructure.a2a.InMemoryA2aTaskStore) {
+            throw new IllegalStateException(
+                    "Stateless deployment requires an external A2aTaskStore implementation");
+        }
         if (properties.isBuildAgents() && agentStateStore instanceof InMemoryAgentStateStore) {
             throw new IllegalStateException(
                     "Stateless deployment with AgentScope agents requires an external AgentStateStore implementation");
+        }
+        if (workflowDefinitionStore.localOnly()) {
+            throw new IllegalStateException(
+                    "Stateless deployment requires an external WorkflowDefinitionStore for dynamic workflows");
         }
     }
 
@@ -405,6 +471,40 @@ public class WorkflowRuntimeConfig {
                 permissionPolicy,
                 agentStateStore).buildAgents(plan);
         return new AgentScopeStreamingAgentInvoker(agents, toolGateway);
+    }
+
+    private WorkflowExecutor workflowExecutor(
+            String workflowId,
+            WorkflowPlan plan,
+            AgentInvoker invoker,
+            KnowledgeRetriever knowledgeRetriever,
+            MemoStore memoStore,
+            PermissionPolicy permissionPolicy,
+            OutputSanitizer outputSanitizer,
+            ExecutionTracer executionTracer,
+            ExecutorService workflowNodeExecutor,
+            DifyRuntimeProperties properties) {
+        return new WorkflowExecutor(
+                workflowId,
+                plan,
+                invoker,
+                knowledgeRetriever,
+                memoStore,
+                permissionPolicy,
+                outputSanitizer,
+                executionTracer,
+                workflowNodeExecutor,
+                properties.getExecution().getMaxSteps(),
+                properties.getExecution().getDefaultNodeTimeout(),
+                properties.getExecution().getNodeTimeouts(),
+                properties.getExecution().getFallbackAnswer(),
+                properties.getExecution().getIdentifierRules().getDemoItem(),
+                properties.getExecution().getIdentifierRules().getDemoRequest(),
+                properties.getExecution().getIdentifierRules().getDemoTask());
+    }
+
+    private boolean redisEnabled(DifyRuntimeProperties properties) {
+        return "redis".equalsIgnoreCase(Optional.ofNullable(properties.getPersistence().getType()).orElse("memory"));
     }
 
     /**

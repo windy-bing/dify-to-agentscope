@@ -13,6 +13,7 @@ import com.example.dify2agentscope.infrastructure.knowledge.StubKnowledgeRetriev
 import com.example.dify2agentscope.infrastructure.mcp.StubToolGateway;
 import com.example.dify2agentscope.infrastructure.memory.NoOpMemoStore;
 import com.example.dify2agentscope.infrastructure.trace.LoggingExecutionTracer;
+import com.example.dify2agentscope.infrastructure.workflow.InMemoryWorkflowDefinitionStore;
 import io.agentscope.core.state.InMemoryAgentStateStore;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -101,6 +102,7 @@ class CodeFirstWorkflowRuntimeTest {
                 new LoggingExecutionTracer(),
                 new NoOpMemoStore(),
                 new InMemoryAgentStateStore(),
-                ForkJoinPool.commonPool());
+                ForkJoinPool.commonPool(),
+                new InMemoryWorkflowDefinitionStore());
     }
 }

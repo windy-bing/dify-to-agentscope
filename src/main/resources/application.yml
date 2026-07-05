@@ -42,6 +42,17 @@ dify:
       node-executor-threads: 8
       node-executor-queue-capacity: 1000
       allow-in-memory-state: true
+    persistence:
+      type: memory
+      key-prefix: dify-to-agentscope
+      session-ttl: 7d
+      a2a-task-ttl: 1d
+      agent-state-ttl: 7d
+    workflow-store:
+      type: memory
+      nacos-data-id-prefix: dify-agentscope-workflow-
+      nacos-index-data-id: dify-agentscope-workflows.json
+      nacos-group: DEFAULT_GROUP
     execution:
       max-steps: 100
       default-node-timeout: 30s

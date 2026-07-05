@@ -5,18 +5,14 @@ import com.example.dify2agentscope.domain.a2a.A2aTaskStore;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
-import org.springframework.stereotype.Component;
 
 /**
  * A2aTaskStore 的内存实现，使用 ConcurrentHashMap 存储任务。
  * <p>
  * In-memory implementation of A2aTaskStore using ConcurrentHashMap for task storage.
  * <p>该实现只适合本地开发或单实例部署。生产水平扩容时应提供 Redis/JDBC 等外部 {@link A2aTaskStore} Bean，
- * 本类会因 {@link ConditionalOnMissingBean} 自动退让。</p>
+ * 生产水平扩容时应提供 Redis/JDBC 等外部 {@link A2aTaskStore} Bean。</p>
  */
-@Component
-@ConditionalOnMissingBean(A2aTaskStore.class)
 public class InMemoryA2aTaskStore implements A2aTaskStore {
 
     private final ConcurrentMap<String, A2aTask> tasks = new ConcurrentHashMap<>();
